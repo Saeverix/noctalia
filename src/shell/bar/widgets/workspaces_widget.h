@@ -82,6 +82,15 @@ private:
   void scheduleRebuildFromSnapshot();
   [[nodiscard]] float workspacePillRadius(float width, float height) const noexcept;
   [[nodiscard]] float workspaceMainAxisMinWidth(float baseSize, bool active) const noexcept;
+  // Pill width for a labelled regular pill: the minimum while the label fits with a small margin,
+  // so short labels of different widths keep identical pills; grows with padding once it does not.
+  [[nodiscard]] float labelledMainAxisWidth(float textWidth, float minWidth, float padding) const noexcept;
+  struct PixelSpan {
+    float start = 0.0F;
+    float size = 0.0F;
+  };
+  // Rounds both edges of a main-axis span, so adjacent pills keep an exact gap while widths animate.
+  [[nodiscard]] static PixelSpan snappedSpan(float x, float width) noexcept;
 
   [[nodiscard]] static std::optional<std::size_t> numericWorkspaceId(const Workspace& workspace);
   [[nodiscard]] std::string workspaceLabel(const Workspace& workspace, std::size_t displayIndex) const;
@@ -132,6 +141,9 @@ private:
     std::string label;
     std::string tooltip;
     std::string iconPath;
+    // Horizontal center of the label's ink, relative to the label origin; lopsided glyphs ("1", "7")
+    // are centered by this rather than by their advance box.
+    float textInkCenterX = 0.0F;
     bool showLabel = false;
     bool showIcon = false;
     bool active = false;

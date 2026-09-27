@@ -445,7 +445,7 @@ void WorkspacesWidget::rebuild(Renderer& renderer) {
     }
   }
 
-  const float gap = kWorkspaceGap * m_contentScale;
+  const float gap = std::round(kWorkspaceGap * m_contentScale);
   const float labelFontSize = workspaceLabelFontSize(isMinimal()) * fontScale();
   const float pillHeight = std::round(kWorkspacePillDefaultHeight * m_contentScale * m_pillScale);
   // Active and inactive labels share the configured weight: a heavier weight selects a different
@@ -453,10 +453,12 @@ void WorkspacesWidget::rebuild(Renderer& renderer) {
   const FontWeight configuredFontWeight = labelFontWeight();
 
   // Measure text and compute per-slot widths along the bar main axis.
-  // Width = max(baseSize * pill_size, textWidth + padding); pill_size comes from active/inactive settings.
+  // Width = baseSize * pill_size while the label fits, textWidth + padding once it does not; pill_size
+  // comes from active/inactive settings.
   struct SlotMetrics {
     float textWidth = 0.0F;
     float textHeight = 0.0F;
+    float textInkCenterX = 0.0F;
     float inactiveWidth = 0.0F;
     float activeWidth = 0.0F;
   };
@@ -470,6 +472,7 @@ void WorkspacesWidget::rebuild(Renderer& renderer) {
       const TextMetrics tm = renderer.measureText(entry.label, labelFontSize, configuredFontWeight);
       slot.textWidth = std::max(tm.right - tm.left, tm.inkRight - tm.inkLeft);
       slot.textHeight = tm.bottom - tm.top;
+      slot.textInkCenterX = (tm.inkLeft + tm.inkRight) * 0.5F;
     }
   }
 
@@ -493,7 +496,7 @@ void WorkspacesWidget::rebuild(Renderer& renderer) {
         slot.inactiveWidth = minWidth;
         slot.activeWidth = minWidth;
       } else {
-        const float textBasedWidth = slot.textWidth + padding * 2.0F;
+        const float textBasedWidth = std::round(slot.textWidth + padding * 2.0F);
         slot.inactiveWidth = std::max(minWidth, textBasedWidth);
         slot.activeWidth = slot.inactiveWidth;
       }
@@ -525,9 +528,8 @@ void WorkspacesWidget::rebuild(Renderer& renderer) {
       slot.inactiveWidth = minWidth;
       slot.activeWidth = minActiveWidth;
     } else {
-      const float textBasedWidth = slot.textWidth + padding;
-      slot.inactiveWidth = std::max(minWidth, textBasedWidth);
-      slot.activeWidth = std::max(minActiveWidth, textBasedWidth);
+      slot.inactiveWidth = labelledMainAxisWidth(slot.textWidth, minWidth, padding);
+      slot.activeWidth = labelledMainAxisWidth(slot.textWidth, minActiveWidth, padding);
     }
   }
 
@@ -556,6 +558,7 @@ void WorkspacesWidget::rebuild(Renderer& renderer) {
     item.exiting = entry.exiting;
     item.label = entry.label;
     item.showLabel = entry.showLabel;
+    item.textInkCenterX = slot.textInkCenterX;
     item.inactiveWidth = slot.inactiveWidth;
     item.activeWidth = slot.activeWidth;
     if (hasSnapshot) {
@@ -712,7 +715,7 @@ void WorkspacesWidget::rebuild(Renderer& renderer) {
   float total = 0.0F;
   for (const auto& item : m_items) {
     if (item.currentWidth > 0.0F) {
-      total = std::max(total, item.currentX + item.currentWidth);
+      total = std::max(total, std::round(item.currentX + item.currentWidth));
     }
   }
   if (total <= 0.0F) {
@@ -787,7 +790,7 @@ void WorkspacesWidget::updateContainerSize() {
   float total = 0.0F;
   for (const auto& item : m_items) {
     if (item.currentWidth > 0.0F) {
-      total = std::max(total, item.currentX + item.currentWidth);
+      total = std::max(total, std::round(item.currentX + item.currentWidth));
     }
   }
 
@@ -864,6 +867,7 @@ void WorkspacesWidget::recalculateItemMetrics(
     const TextMetrics tm = renderer.measureText(label, labelFontSize, configuredFontWeight);
     textWidth = std::max(tm.right - tm.left, tm.inkRight - tm.inkLeft);
     textHeight = tm.bottom - tm.top;
+    item.textInkCenterX = (tm.inkLeft + tm.inkRight) * 0.5F;
   }
 
   if (isMinimal()) {
@@ -872,7 +876,7 @@ void WorkspacesWidget::recalculateItemMetrics(
       item.inactiveWidth = minWidth;
       item.activeWidth = minWidth;
     } else {
-      const float textBasedWidth = textWidth + padding * 2.0F;
+      const float textBasedWidth = std::round(textWidth + padding * 2.0F);
       item.inactiveWidth = std::max(minWidth, textBasedWidth);
       item.activeWidth = item.inactiveWidth;
     }
@@ -894,9 +898,8 @@ void WorkspacesWidget::recalculateItemMetrics(
       item.inactiveWidth = minWidth;
       item.activeWidth = minActiveWidth;
     } else {
-      const float textBasedWidth = textWidth + padding;
-      item.inactiveWidth = std::max(minWidth, textBasedWidth);
-      item.activeWidth = std::max(minActiveWidth, textBasedWidth);
+      item.inactiveWidth = labelledMainAxisWidth(textWidth, minWidth, padding);
+      item.activeWidth = labelledMainAxisWidth(textWidth, minActiveWidth, padding);
     }
   }
 
@@ -1107,11 +1110,11 @@ void WorkspacesWidget::applyItemLayout(Item& it) {
   it.area->setParticipatesInLayout(visible);
   it.area->setOpacity(std::clamp(it.currentOpacity, 0.0F, 1.0F));
 
-  const float position = std::round(it.currentX);
-  const float itemW = m_isVertical ? m_indicatorHeight : it.currentWidth;
-  const float itemH = m_isVertical ? it.currentWidth : m_indicatorHeight;
+  const PixelSpan span = snappedSpan(it.currentX, it.currentWidth);
+  const float itemW = m_isVertical ? m_indicatorHeight : span.size;
+  const float itemH = m_isVertical ? span.size : m_indicatorHeight;
 
-  it.area->setPosition(m_isVertical ? 0.0F : position, m_isVertical ? position : 0.0F);
+  it.area->setPosition(m_isVertical ? 0.0F : span.start, m_isVertical ? span.start : 0.0F);
   it.area->setFrameSize(itemW, itemH);
   if (it.indicator != nullptr) {
     if (isFocusHint() && !it.workspace.active) {
@@ -1155,6 +1158,10 @@ void WorkspacesWidget::applyItemLayout(Item& it) {
 
   const float iconSize = focusedPillIconSize();
   const float iconGap = Style::spaceXs * m_contentScale;
+  // A lone label is centered by its ink, so lopsided glyphs like "1" and "7" sit optically centered.
+  // The ink center is measured from the label's origin, which is its left edge only in LTR.
+  const bool inkCenterText = showText && !showIcon && !Style::rtl() && it.text->width() <= itemW;
+  const float inkTextX = inkCenterText ? std::max(0.0F, std::round(itemW * 0.5F - it.textInkCenterX)) : 0.0F;
 
   if (m_isVertical) {
     const float textHeight = showText ? it.text->height() : 0.0F;
@@ -1165,7 +1172,7 @@ void WorkspacesWidget::applyItemLayout(Item& it) {
 
     if (showText) {
       const float textX = contentX + (contentWidth - it.text->width()) * 0.5F;
-      it.text->setPosition(std::max(0.0F, textX), cursorY);
+      it.text->setPosition(inkCenterText ? inkTextX : std::max(0.0F, textX), cursorY);
       cursorY += textHeight + iconGap;
     }
     if (showIcon) {
@@ -1185,7 +1192,7 @@ void WorkspacesWidget::applyItemLayout(Item& it) {
 
   if (showText) {
     const float textY = contentY + (contentHeight - it.text->height()) * 0.5F;
-    it.text->setPosition(std::max(0.0F, cursorX), textY);
+    it.text->setPosition(inkCenterText ? inkTextX : std::max(0.0F, cursorX), textY);
     cursorX += textWidth + iconGap;
   }
   if (showIcon) {
@@ -1227,16 +1234,17 @@ void WorkspacesWidget::updateHoverOverlay() {
   if (m_hoverOverlay == nullptr) {
     return;
   }
-  const float w = hoveredItem.currentWidth;
+  const PixelSpan span = snappedSpan(hoveredItem.currentX, hoveredItem.currentWidth);
+  const float w = span.size;
   const float indicatorW = m_isVertical ? m_indicatorHeight : w;
   const float indicatorH = m_isVertical ? w : m_indicatorHeight;
 
   m_hoverOverlay->setRadius(workspacePillRadius(indicatorW, indicatorH));
   if (m_isVertical) {
-    m_hoverOverlay->setPosition(0.0F, std::round(hoveredItem.currentX));
+    m_hoverOverlay->setPosition(0.0F, span.start);
     m_hoverOverlay->setFrameSize(m_indicatorHeight, w);
   } else {
-    m_hoverOverlay->setPosition(std::round(hoveredItem.currentX), 0.0F);
+    m_hoverOverlay->setPosition(span.start, 0.0F);
     m_hoverOverlay->setFrameSize(w, m_indicatorHeight);
   }
 }
@@ -1246,7 +1254,21 @@ float WorkspacesWidget::workspacePillRadius(float width, float height) const noe
 }
 
 float WorkspacesWidget::workspaceMainAxisMinWidth(float baseSize, bool active) const noexcept {
-  return baseSize * (active ? m_activePillSize : m_inactivePillSize);
+  return std::round(baseSize * (active ? m_activePillSize : m_inactivePillSize));
+}
+
+float WorkspacesWidget::labelledMainAxisWidth(float textWidth, float minWidth, float padding) const noexcept {
+  const float minMargin = Style::spaceXs * m_contentScale;
+  if (textWidth + minMargin * 2.0F <= minWidth) {
+    return minWidth;
+  }
+  return std::max(minWidth, std::round(textWidth + padding));
+}
+
+WorkspacesWidget::PixelSpan WorkspacesWidget::snappedSpan(float x, float width) noexcept {
+  const float start = std::round(x);
+  const float end = std::round(x + width);
+  return {.start = start, .size = std::max(0.0F, end - start)};
 }
 
 WorkspacesWidget::~WorkspacesWidget() {
@@ -1287,7 +1309,7 @@ float WorkspacesWidget::focusedPillActiveMainAxisSize(
     return minActive;
   }
   const float textExtent = showLabel ? (m_isVertical ? textHeight : textWidth) : 0.0F;
-  return std::max(minActive, textExtent + iconReserve + padding);
+  return std::max(minActive, std::round(textExtent + iconReserve + padding));
 }
 
 void WorkspacesWidget::buildDesktopIconIndex() {
