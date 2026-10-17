@@ -209,7 +209,8 @@ void ActiveWindowWidget::syncState(Renderer& renderer) {
       && identifier == m_lastIdentifier
       && title == m_lastTitle
       && appId == m_lastAppId
-      && emptyState == m_lastEmptyState) {
+      && emptyState == m_lastEmptyState
+      && renderer.renderScale() == m_lastIconRenderScale) {
     return;
   }
   m_iconColorizeRefreshPending = false;
@@ -218,6 +219,7 @@ void ActiveWindowWidget::syncState(Renderer& renderer) {
   m_lastTitle = title;
   m_lastAppId = appId;
   m_lastEmptyState = emptyState;
+  m_lastIconRenderScale = renderer.renderScale();
 
   const std::string tooltipText = emptyState ? std::string{} : title;
   if (tooltipText != m_lastTooltipTitle) {
@@ -231,7 +233,7 @@ void ActiveWindowWidget::syncState(Renderer& renderer) {
     }
   }
 
-  std::string iconPath = emptyState ? std::string{} : resolveIconPath(appId);
+  std::string iconPath = emptyState ? std::string{} : resolveIconPath(appId, m_lastIconRenderScale);
 
   m_title->setText(m_lastTitle);
   m_title->setColor(widgetForegroundOr(colorSpecFromRole(ColorRole::OnSurface)));
@@ -256,7 +258,7 @@ int ActiveWindowWidget::iconTargetSize() const noexcept {
   return std::max(1, static_cast<int>(std::round(m_iconSize * m_contentScale)));
 }
 
-std::string ActiveWindowWidget::resolveIconPath(const std::string& appId) {
+std::string ActiveWindowWidget::resolveIconPath(const std::string& appId, float renderScale) {
   if (appId.empty()) {
     return {};
   }
@@ -265,19 +267,23 @@ std::string ActiveWindowWidget::resolveIconPath(const std::string& appId) {
     return internal->iconPath;
   }
 
+  // Theme bitmaps are never upscaled on load, so look up at the physical size Image will rasterize to.
+  const int iconLookupSize =
+      std::max(1, static_cast<int>(std::round(static_cast<float>(iconTargetSize()) * std::max(1.0F, renderScale))));
+
   if (const auto entry = app_identity::findDesktopEntry(appId, desktopEntries());
       entry.has_value() && !entry->icon.empty()) {
-    const std::string& resolved = m_iconResolver.resolve(entry->icon, iconTargetSize());
+    const std::string& resolved = m_iconResolver.resolve(entry->icon, iconLookupSize);
     if (!resolved.empty()) {
       return resolved;
     }
   }
 
-  auto resolveByName = [this](const std::string& name) -> std::string {
+  auto resolveByName = [this, iconLookupSize](const std::string& name) -> std::string {
     if (name.empty()) {
       return {};
     }
-    return m_iconResolver.resolve(name, iconTargetSize());
+    return m_iconResolver.resolve(name, iconLookupSize);
   };
 
   if (auto it = m_appIcons.find(appId); it != m_appIcons.end()) {

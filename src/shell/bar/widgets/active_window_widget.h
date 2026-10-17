@@ -51,7 +51,7 @@ private:
   void syncWidgetVisibility(bool showWidget);
   void syncState(Renderer& renderer);
   [[nodiscard]] int iconTargetSize() const noexcept;
-  [[nodiscard]] std::string resolveIconPath(const std::string& appId);
+  [[nodiscard]] std::string resolveIconPath(const std::string& appId, float renderScale);
   void buildDesktopIconIndex();
 
   ConfigService& m_config;
@@ -75,6 +75,7 @@ private:
   std::string m_lastAppId;
   std::string m_lastIconPath;
   std::string m_lastTooltipTitle;
+  float m_lastIconRenderScale = 0.0F;
   bool m_lastEmptyState = false;
   bool m_iconColorizeRefreshPending = false;
   Signal<>::ScopedConnection m_appIconColorizeConn;
